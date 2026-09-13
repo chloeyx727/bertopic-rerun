@@ -1,0 +1,67 @@
+name: BERTopic Rerun
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATA_GZ_B64: ${{ secrets.DATA_GZ_B64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU PyTorch
+        run: python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install analysis dependencies
+        run: python -m pip install --no-cache-dir -r requirements.txt
+
+      - name: Verify secret is present
+        run: |
+          python - <<'PY2'
+          import os
+          x=os.environ.get("DATA_GZ_B64", "")
+          if not x:
+              raise SystemExit("DATA_GZ_B64 secret is missing")
+          print("DATA_GZ_B64 present; encoded length:", len(x))
+          PY2
+
+      - name: Run exact reconstructed BERTopic analysis
+        run: |
+          python - <<'PY2'
+          import json
+          import app
+          app.run_analysis()
+          result=app.RESULT
+          if result.get("status") != "complete":
+              print(json.dumps(result, ensure_ascii=False, indent=2))
+              raise SystemExit("BERTopic analysis failed")
+          with open("bertopic_result.json", "w", encoding="utf-8") as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+          print("BERTopic analysis complete")
+          print(json.dumps({
+              "n_documents": result["n_documents"],
+              "n_participants": result["n_participants"],
+              "n_topics_excluding_outlier": result["n_topics_excluding_outlier"],
+              "topic_counts": result["topic_counts"],
+              "outlier_count": result["outlier_count"],
+              "outlier_percent": result["outlier_percent"]
+          }, ensure_ascii=False, indent=2))
+          PY2
+
+      - name: Upload aggregate result
+        uses: actions/upload-artifact@v4
+        with:
+          name: bertopic-result
+          path: bertopic_result.json
+          if-no-files-found: error
+          retention-days: 7
